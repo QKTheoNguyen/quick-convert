@@ -282,7 +282,7 @@ def test_psst1_resynthesis_uses_the_original_xvector(make_psst1):
 
 
 def test_psst1_downloads_released_weights_when_no_directory_is_given(tmp_path, monkeypatch, make_psst1):
-    import huggingface_hub
+    huggingface_hub = pytest.importorskip("huggingface_hub")
 
     calls = []
 
@@ -305,7 +305,7 @@ def test_psst1_downloads_released_weights_when_no_directory_is_given(tmp_path, m
 
 
 def test_psst1_download_accepts_another_repository(tmp_path, monkeypatch):
-    import huggingface_hub
+    huggingface_hub = pytest.importorskip("huggingface_hub")
 
     monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda **kwargs: str(tmp_path / kwargs["repo_id"]))
 
