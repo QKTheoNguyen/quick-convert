@@ -11,7 +11,7 @@ Run `quick-convert --help` to list the composition roots installed with your ver
 | Train VQ-ASR | `transformers`, `asr`, `training` | `train vq_asr_librispeech data_root=/data` | resolved config and Lightning checkpoints |
 | Train CosyVoice reconstruction | `transformers`, `cosyvoice`, `training` | `train sslr_w2vbert_cmdiff data_root=/data` | resolved config and Lightning checkpoints |
 | Evaluate Whisper ASR | `whisper`, `wer` | `evaluate asr_librispeech data_root=/data` | evaluation results beneath the configured output directory |
-| Detect personal information in Whisper transcripts with [OpenAI Privacy Filter](https://huggingface.co/openai/privacy-filter) (English; spans use greedy BIOES decoding) | `whisper`, `privacy-filter` | `evaluate pii_librispeech data_root=/data` | `predictions.csv` with each utterance's transcript and detected PII spans |
+| Detect personal information in Moonshine transcripts with [OpenAI Privacy Filter](https://huggingface.co/openai/privacy-filter) (English; spans use greedy BIOES decoding) | `moonshine`, `privacy-filter` | `evaluate pii_librispeech data_root=/data` | `predictions.csv` with each utterance's transcript and detected PII spans, including their start and end times in seconds |
 | Evaluate Moonshine v2 ASR (CPU, ONNX Runtime; non-English models are non-commercial) | `moonshine`, `wer` | `evaluate asr_moonshine_librispeech data_root=/data` | evaluation results beneath the configured output directory |
 | Anonymize CLAC with KNN-VC | backend-specific dependencies | `convert knnvc_clac` | converted audio beneath the configured output directory |
 | Precompute ECAPA x-vectors for the PSST1 flow | `speechbrain` | `precompute spk_ecapa_librispeech data_root=/data` | x-vector sidecar tensors |

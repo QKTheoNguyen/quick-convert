@@ -8,6 +8,7 @@ from quick_convert.dependencies import compose_dependency_plan
 from quick_convert.pipelines.evaluation.pipeline import EvalPipeline
 from quick_convert.systems.pii import OpenAIPrivacyFilter, TranscriptPIISystem
 from quick_convert.systems.pii.privacy_filter import decode_bioes
+from quick_convert.systems.pii.transcript import add_span_times
 
 
 TEXT = "Call Alice Smith at 555 1234 now"
@@ -95,4 +96,32 @@ def test_evaluation_without_metrics_records_transcript_pii_columns(tmp_path):
 
 
 def test_pii_run_requires_asr_and_privacy_filter_extras():
-    assert compose_dependency_plan("eval_pii_librispeech").extras == ("privacy-filter", "whisper")
+    assert compose_dependency_plan("eval_pii_librispeech").extras == ("moonshine", "privacy-filter")
+
+
+def test_timed_asr_gives_each_span_the_time_range_of_its_words(tmp_path):
+    words = [
+        {"word": "call", "start": 0.0, "end": 0.4},
+        {"word": "Bob", "start": 0.5, "end": 0.8},
+        {"word": "Smith,", "start": 0.8, "end": 1.2},
+        {"word": "bye", "start": 2.0, "end": 2.3},
+    ]
+    asr = SimpleNamespace(word_timestamps=True, transcribe_batch_words=lambda batch: [words])
+    seen = []
+
+    def detect(texts):
+        seen.extend(texts)
+        return [[{"label": "private_person", "start": 5, "end": 14, "text": "Bob Smith", "score": 1.0}]]
+
+    system = TranscriptPIISystem(asr, SimpleNamespace(detect=detect))
+    [record] = system.get_labels(batch=None)
+
+    assert seen == ["call Bob Smith, bye"]
+    assert (record["pii"][0]["start_time"], record["pii"][0]["end_time"]) == (0.5, 1.2)
+
+
+def test_span_without_overlapping_word_has_no_time_range():
+    spans = [{"start": 4, "end": 5}]
+    add_span_times(spans, [{"word": "hi", "start": 0.0, "end": 0.2}])
+
+    assert (spans[0]["start_time"], spans[0]["end_time"]) == (None, None)

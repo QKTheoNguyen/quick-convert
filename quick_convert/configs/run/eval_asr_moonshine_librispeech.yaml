@@ -12,7 +12,7 @@ dataset:
   splits:
     - test-other
   load: true
-  target_sr: ${system.sr}
+  target_sr: ${class_attr:${system._target_},SAMPLE_RATE}
   resource_providers:
     - ${transcript_provider}
 
