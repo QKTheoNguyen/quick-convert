@@ -7,6 +7,7 @@ from quick_convert.data.types import AudioBatch
 from quick_convert.pipelines.training.modules.tokenizer.bpe import (
     SentencePieceBPETrainer as LegacySentencePieceBPETrainer,
 )
+from quick_convert.systems.asr.moonshine_asr import MoonshineASR
 from quick_convert.systems.asr.whisper_asr import WhisperASR
 from quick_convert.training.tokenizers.sentencepiece import SentencePieceBPETrainer
 
@@ -90,3 +91,38 @@ def test_whisper_batch_path_uses_retained_optional_module(monkeypatch):
     )
 
     assert system.get_labels(batch) == ["hello"]
+
+
+def test_moonshine_batch_path_trims_padding_and_joins_lines(monkeypatch):
+    calls = []
+
+    class FakeTranscriber:
+        def __init__(self, model_path, model_arch):
+            calls.append(("load", model_path, model_arch))
+
+        def transcribe_without_streaming(self, audio, sample_rate):
+            calls.append((len(audio), sample_rate))
+            lines = [SimpleNamespace(text=" hello "), SimpleNamespace(text=""), SimpleNamespace(text="world")]
+            return SimpleNamespace(lines=lines)
+
+    fake_moonshine = SimpleNamespace(
+        string_to_model_arch=lambda name: {"tiny": 0}[name],
+        get_model_for_language=lambda language, arch: (f"/models/{language}", arch),
+        Transcriber=FakeTranscriber,
+    )
+    monkeypatch.setitem(sys.modules, "moonshine_voice", fake_moonshine)
+
+    system = MoonshineASR(model_arch="tiny")
+    batch = AudioBatch(
+        utt_ids=["a", "b"],
+        paths=[],
+        splits=[None, None],
+        resources={},
+        waveforms=torch.zeros(2, 16),
+        lengths=torch.tensor([16, 9]),
+        sample_rates=torch.tensor([16_000, 16_000]),
+    )
+
+    assert system.sr == MoonshineASR.SAMPLE_RATE
+    assert system.get_labels(batch) == ["hello world", "hello world"]
+    assert calls == [("load", "/models/en", 0), (16, 16_000), (9, 16_000)]
