@@ -18,8 +18,10 @@ class MoonshineASR(ASRSystem):
     Args:
         language: Moonshine language code or English language name.
         model_arch: Moonshine architecture name such as ``"tiny"``, ``"base"``
-            or ``"medium-streaming"``. ``None`` selects the backend's default
-            model for ``language``.
+            or ``"medium-streaming"``. Defaults to ``"medium-streaming"``, which
+            is only published for English; pick another architecture for other
+            languages. ``None`` selects the backend's default model for
+            ``language``, which can change between ``moonshine-voice`` releases.
         word_timestamps: Download the extra alignment decoder and enable
             ``transcribe_batch_words``.
         pred_key: Resource or result key used for predicted transcripts.
@@ -31,7 +33,7 @@ class MoonshineASR(ASRSystem):
     def __init__(
         self,
         language: str = "en",
-        model_arch: str | None = None,
+        model_arch: str | None = "medium-streaming",
         word_timestamps: bool = False,
         pred_key="transcript",
         name="moonshine",

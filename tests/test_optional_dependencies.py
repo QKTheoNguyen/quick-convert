@@ -132,6 +132,7 @@ def test_moonshine_word_timestamps_keep_lines_without_word_timings(monkeypatch):
     loaded = {}
 
     def get_model(language, arch, include_word_timestamps):
+        loaded["arch"] = arch
         loaded["include_word_timestamps"] = include_word_timestamps
         return "/models/en", arch
 
@@ -153,7 +154,11 @@ def test_moonshine_word_timestamps_keep_lines_without_word_timings(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "moonshine_voice",
-        SimpleNamespace(string_to_model_arch=None, get_model_for_language=get_model, Transcriber=FakeTranscriber),
+        SimpleNamespace(
+            string_to_model_arch={"medium-streaming": 5}.__getitem__,
+            get_model_for_language=get_model,
+            Transcriber=FakeTranscriber,
+        ),
     )
     batch = AudioBatch(
         utt_ids=["a"],
@@ -167,7 +172,7 @@ def test_moonshine_word_timestamps_keep_lines_without_word_timings(monkeypatch):
 
     words = MoonshineASR(word_timestamps=True).transcribe_batch_words(batch)
 
-    assert loaded == {"include_word_timestamps": True, "options": {"word_timestamps": "true"}}
+    assert loaded == {"arch": 5, "include_word_timestamps": True, "options": {"word_timestamps": "true"}}
     assert words == [
         [
             {"word": "Hi", "start": 0.1, "end": 0.3},
