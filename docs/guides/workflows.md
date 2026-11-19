@@ -11,6 +11,7 @@ Run `quick-convert --help` to list the composition roots installed with your ver
 | Train VQ-ASR | `transformers`, `asr`, `training` | `train vq_asr_librispeech data_root=/data` | resolved config and Lightning checkpoints |
 | Train CosyVoice reconstruction | `transformers`, `cosyvoice`, `training` | `train sslr_w2vbert_cmdiff data_root=/data` | resolved config and Lightning checkpoints |
 | Evaluate Whisper ASR | `whisper`, `wer` | `evaluate asr_librispeech data_root=/data` | evaluation results beneath the configured output directory |
+| Evaluate Moonshine v2 ASR (CPU, ONNX Runtime; non-English models are non-commercial) | `moonshine`, `wer` | `evaluate asr_moonshine_librispeech data_root=/data` | evaluation results beneath the configured output directory |
 | Anonymize CLAC with KNN-VC | backend-specific dependencies | `convert knnvc_clac` | converted audio beneath the configured output directory |
 | Precompute ECAPA x-vectors for the PSST1 flow | `speechbrain` | `precompute spk_ecapa_librispeech data_root=/data` | x-vector sidecar tensors |
 | Train the [PSST1](../components/psst1.md) flow | `training` | `train psst1_flow_librispeech data_root=/data` | Lightning checkpoints and `flow.pt` |

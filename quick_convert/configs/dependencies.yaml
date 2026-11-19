@@ -18,6 +18,8 @@ extras:
     probes: [espnet2, s3prl]
   manifests:
     probes: [pandas]
+  moonshine:
+    probes: [moonshine_voice]
   mpm:
     probes: [masked_prosody_model]
   pase:
@@ -83,6 +85,7 @@ targets:
   quick_convert.components.encoders.content.VoiceFMContentEncoder: [voicefm]
   quick_convert.components.encoders.content.WavLMContentEncoder: [transformers]
   quick_convert.pipelines.evaluation.metrics.JiwerWER: [wer]
+  quick_convert.systems.asr.MoonshineASR: [moonshine]
   quick_convert.systems.asr.WhisperASR: [whisper]
   quick_convert.systems.ser.odyssey_ser.OdysseySER: [transformers]
   quick_convert.systems.ser.speechbrain_ser.SpeechBrainSER: [speechbrain-ser]
