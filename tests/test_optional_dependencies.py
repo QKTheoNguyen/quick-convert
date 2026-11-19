@@ -1,12 +1,15 @@
 import sys
 from types import SimpleNamespace
 
+import pytest
 import torch
+from pii_contract import assert_timed_words
 
 from quick_convert.data.types import AudioBatch
 from quick_convert.pipelines.training.modules.tokenizer.bpe import (
     SentencePieceBPETrainer as LegacySentencePieceBPETrainer,
 )
+from quick_convert.systems.asr.moonshine_asr import MoonshineASR
 from quick_convert.systems.asr.whisper_asr import WhisperASR
 from quick_convert.training.tokenizers.sentencepiece import SentencePieceBPETrainer
 
@@ -90,3 +93,97 @@ def test_whisper_batch_path_uses_retained_optional_module(monkeypatch):
     )
 
     assert system.get_labels(batch) == ["hello"]
+
+
+def test_moonshine_batch_path_trims_padding_and_joins_lines(monkeypatch):
+    calls = []
+
+    class FakeTranscriber:
+        def __init__(self, model_path, model_arch):
+            calls.append(("load", model_path, model_arch))
+
+        def transcribe_without_streaming(self, audio, sample_rate):
+            calls.append((len(audio), sample_rate))
+            lines = [SimpleNamespace(text=" hello "), SimpleNamespace(text=""), SimpleNamespace(text="world")]
+            return SimpleNamespace(lines=lines)
+
+    fake_moonshine = SimpleNamespace(
+        string_to_model_arch=lambda name: {"tiny": 0}[name],
+        get_model_for_language=lambda language, arch: (f"/models/{language}", arch),
+        Transcriber=FakeTranscriber,
+    )
+    monkeypatch.setitem(sys.modules, "moonshine_voice", fake_moonshine)
+
+    system = MoonshineASR(model_arch="tiny")
+    batch = AudioBatch(
+        utt_ids=["a", "b"],
+        paths=[],
+        splits=[None, None],
+        resources={},
+        waveforms=torch.zeros(2, 16),
+        lengths=torch.tensor([16, 9]),
+        sample_rates=torch.tensor([16_000, 16_000]),
+    )
+
+    assert system.sr == MoonshineASR.SAMPLE_RATE
+    assert system.get_labels(batch) == ["hello world", "hello world"]
+    assert calls == [("load", "/models/en", 0), (16, 16_000), (9, 16_000)]
+
+
+def _fake_moonshine(monkeypatch, lines):
+    class FakeTranscriber:
+        def __init__(self, model_path, model_arch):
+            pass
+
+        def transcribe_without_streaming(self, audio, sample_rate):
+            return SimpleNamespace(lines=[SimpleNamespace(text=text) for text in lines])
+
+    monkeypatch.setitem(
+        sys.modules,
+        "moonshine_voice",
+        SimpleNamespace(
+            string_to_model_arch={"medium-streaming": 5}.__getitem__,
+            get_model_for_language=lambda language, arch: ("/models/en", arch),
+            Transcriber=FakeTranscriber,
+        ),
+    )
+
+
+def test_moonshine_transcribe_words_times_transcript_with_forced_alignment(monkeypatch):
+    _fake_moonshine(monkeypatch, [" My name ", "", "is Alice."])
+    asr = MoonshineASR(device="cuda")
+    seen = []
+
+    def align(waveform, words):
+        seen.append((waveform.shape, words))
+        return [{"word": w, "start_s": 0.1 * i, "end_s": 0.1 * (i + 1)} for i, w in enumerate(words)]
+
+    asr.aligner.align = align
+    wav = torch.zeros(1, 16_000)
+
+    words = asr.transcribe_words(wav)
+
+    assert asr.aligner.device == "cuda"
+    assert seen == [((16_000,), ["My", "name", "is", "Alice."])]
+    assert [w["word"] for w in words] == ["My", "name", "is", "Alice."]
+    assert_timed_words(words, duration=1.0)
+    assert wav.shape == (1, 16_000)
+
+
+def test_moonshine_transcribe_words_returns_empty_list_for_silence(monkeypatch):
+    _fake_moonshine(monkeypatch, [])
+    asr = MoonshineASR()
+    asr.aligner.align = lambda waveform, words: pytest.fail("nothing to align")
+
+    assert asr.transcribe_words(torch.zeros(8_000)) == []
+
+
+def test_moonshine_transcribe_words_covers_clip_when_alignment_fails(monkeypatch):
+    _fake_moonshine(monkeypatch, ["call 555 0132"])
+    asr = MoonshineASR()
+    asr.aligner.align = lambda waveform, words: None
+
+    words = asr.transcribe_words(torch.zeros(8_000))
+
+    assert words == [{"word": "call 555 0132", "start_s": 0.0, "end_s": 0.5}]
+    assert_timed_words(words, duration=0.5)

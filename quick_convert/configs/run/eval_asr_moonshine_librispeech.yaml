@@ -1,0 +1,22 @@
+# @package _global_
+
+defaults:
+  - /global: default
+  - /dataset: librispeech
+  - /pipeline: evaluation
+  - /asr@system: moonshine
+  - /resource_providers/librispeech@transcript_provider: transcript
+  - _self_
+
+dataset:
+  splits:
+    - test-other
+  load: true
+  target_sr: ${class_attr:${system._target_},SAMPLE_RATE}
+  resource_providers:
+    - ${transcript_provider}
+
+ref_dataset: null
+
+metrics:
+  - _target_: quick_convert.pipelines.evaluation.metrics.JiwerWER

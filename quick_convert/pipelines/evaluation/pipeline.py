@@ -21,7 +21,9 @@ class EvalPipeline:
     instead of assigning it a dedicated sample field. With a separate reference
     dataset, both datasets must have the same unique utterance IDs. Records
     follow prediction order. ``reference_systems`` maps metric keys to systems
-    that generate reference values from the separate dataset.
+    that generate reference values from the separate dataset. Without metrics,
+    a configured system still runs: a dictionary prediction becomes
+    ``pred_<key>`` columns and any other prediction a ``prediction`` column.
     """
 
     def __init__(
@@ -147,8 +149,9 @@ class EvalPipeline:
                     paired_refs.append(references_by_id.pop(utt_id))
                 refs = {metric.key: [values[metric.key] for values in paired_refs] for metric in self.metrics}
 
-            predictions = self.system.get_labels(pred_batch) if self.metrics else []
-            if self.metrics and len(predictions) != len(pred_batch):
+            predicting = bool(self.metrics) or self.system is not None
+            predictions = self.system.get_labels(pred_batch) if predicting else []
+            if predicting and len(predictions) != len(pred_batch):
                 raise ValueError(
                     f"System returned {len(predictions)} predictions for a batch of size {len(pred_batch)}"
                 )
@@ -179,6 +182,13 @@ class EvalPipeline:
 
                 for metric in self.metrics:
                     record[metric.pred_key] = predictions[i]
+
+                if not self.metrics and self.system is not None:
+                    prediction = predictions[i]
+                    if isinstance(prediction, dict):
+                        record.update({f"pred_{key}": value for key, value in prediction.items()})
+                    else:
+                        record["prediction"] = prediction
 
                 records.append(record)
 

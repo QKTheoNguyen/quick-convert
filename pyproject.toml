@@ -32,6 +32,12 @@ conflicts = [
         { extra = "dac" },
         { extra = "espnet-wavlm-joint" },
     ],
+    # privacy-filter needs transformers 5.6+; these extras pin transformers<5.
+    [{ extra = "privacy-filter" }, { extra = "voicefm" }],
+    [{ extra = "privacy-filter" }, { extra = "spear" }],
+    [{ extra = "privacy-filter" }, { extra = "emotion2vec" }],
+    [{ extra = "privacy-filter" }, { extra = "conditional-rvq" }],
+    [{ extra = "privacy-filter" }, { extra = "speechbrain-ser" }],
 ]
 
 override-dependencies = ["hydra-core==1.3.2", "omegaconf==2.3.0"]
@@ -109,6 +115,8 @@ conditional-rvq = ["funasr>=1.3.6", "transformers>=4.50.1,<5"] # Compatibility a
 opensmile = ["opensmile>=2.6.0,<3"]
 mpm = ["masked-prosody-model>=0.3.0"]
 whisper = ["openai-whisper>=20231117"]
+moonshine = ["moonshine-voice>=0.1.6"]
+privacy-filter = ["transformers>=5.6"]
 sentencepiece = ["sentencepiece>=0.2.0"]
 speechbrain = ["speechbrain>=1.0.3,<2"]
 speechbrain-ser = ["speechbrain>=1.0.3,<2", "transformers>=4.36,<5"]

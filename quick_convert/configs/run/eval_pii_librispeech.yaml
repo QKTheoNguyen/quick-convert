@@ -1,0 +1,24 @@
+# @package _global_
+
+# Transcribe audio into force-aligned words and list detected personal
+# information, with its time range, per utterance.
+defaults:
+  - /global: default
+  - /dataset: librispeech
+  - /pipeline: evaluation
+  - /asr@system.asr: moonshine
+  - /pii@system.detector: privacy_filter
+  - _self_
+
+system:
+  _target_: quick_convert.systems.pii.TranscriptPIISystem
+  name: transcript_pii
+
+dataset:
+  splits:
+    - test-other
+  load: true
+  target_sr: ${class_attr:${system.asr._target_},SAMPLE_RATE}
+
+ref_dataset: null
+metrics: []
