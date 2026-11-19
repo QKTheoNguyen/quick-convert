@@ -5,8 +5,7 @@ from collections.abc import Callable
 
 import numpy as np
 
-from .base import PIIDetector, mask_text
-from .transcript import add_span_times
+from .base import PIIDetector, mask_text, timed_spans
 
 
 class StreamingPIIMasker:
@@ -34,7 +33,7 @@ class StreamingPIIMasker:
         prefix = f"{prefix} " if prefix else ""
         return [
             {**span, "start": max(span["start"] - len(prefix), 0), "end": span["end"] - len(prefix)}
-            for span in self.detector.detect([prefix + text])[0]
+            for span in self.detector.detect_text([prefix + text])[0]
             if span["end"] > len(prefix)
         ]
 
@@ -64,7 +63,7 @@ class StreamingPIIBeeper:
     Args:
         masker: Masker providing context-aware detection and the masked text.
         align: Maps a mono waveform at ``sample_rate`` and the line's words to
-            one ``{"word", "start", "end"}`` entry per word, with times in
+            one ``{"word", "start_s", "end_s"}`` entry per word, with times in
             seconds from the waveform start, or ``None`` when they cannot be
             aligned.
         sample_rate: Sample rate of the written audio.
@@ -122,9 +121,8 @@ class StreamingPIIBeeper:
             if words is None:
                 self._beep(base, self.written / self.sample_rate)
             else:
-                add_span_times(spans, words)
-                for span in spans:
-                    self._beep(base + span["start_time"], base + span["end_time"])
+                for span in timed_spans(spans, words):
+                    self._beep(base + span["start_s"], base + span["end_s"])
         if done:
             self.masker.add_context(text)
         return mask_text(text, spans)

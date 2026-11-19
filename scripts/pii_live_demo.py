@@ -44,10 +44,9 @@ import time
 
 import moonshine_voice
 import numpy as np
-import torch
-import torchaudio
 from moonshine_voice.transcriber import LineCompleted, LineTextChanged
 
+from quick_convert.components.alignment import MMSForcedAligner
 from quick_convert.systems.pii import OpenAIPrivacyFilter, StreamingPIIBeeper, StreamingPIIMasker
 
 
@@ -73,7 +72,7 @@ def main() -> None:
     text_out = sys.stderr if args.beep else sys.stdout
 
     detector = OpenAIPrivacyFilter()
-    detector.detect(["warm up"])  # load the weights before listening
+    detector.detect_text(["warm up"])  # load the weights before listening
     masker = StreamingPIIMasker(detector)
 
     # shortcut: rewrites one terminal row, so a line wider than the terminal smears; use a UI for long lines.
@@ -82,7 +81,10 @@ def main() -> None:
         text_out.flush()
 
     if args.beep:
-        beeper = StreamingPIIBeeper(masker, mms_aligner(args.fa_device), STDIN_SAMPLE_RATE)
+        # Streamed Moonshine word times are unreliable in moonshine-voice 0.1.6, so lines are force-aligned.
+        aligner = MMSForcedAligner(args.fa_device)
+        aligner.align(np.zeros(STDIN_SAMPLE_RATE, dtype=np.float32), ["warm"])  # load the weights before listening
+        beeper = StreamingPIIBeeper(masker, aligner.align, STDIN_SAMPLE_RATE)
         stream_stdin(
             chunks, lambda line, done: show(beeper.update(line.text, line.start_time, done), done), beeper, audio_out
         )
@@ -90,43 +92,6 @@ def main() -> None:
         stream_stdin(chunks, lambda line, done: show(masker.mask(line.text, done), done))
     else:
         listen_microphone(lambda text, done: show(masker.mask(text, done), done))
-
-
-def mms_aligner(device: str = "cpu"):
-    """Force-align a line's words to its audio with torchaudio's MMS_FA (CTC; ~1.2 GB download on first use).
-
-    Streamed Moonshine word times are unreliable in moonshine-voice 0.1.6, and
-    re-transcribing to get them is slower and changes the text.
-    """
-    bundle = torchaudio.pipelines.MMS_FA
-    model = bundle.get_model(with_star=True).eval().to(device)
-    # Index 0 ("-") is the CTC blank, which cannot appear in a target, so hyphens are dropped too.
-    dictionary = {c: i for c, i in bundle.get_dict(star="*").items() if i != 0}
-
-    @torch.inference_mode()
-    def align(waveform: np.ndarray, words: list[str]) -> list[dict] | None:
-        # Characters outside the model's alphabet are dropped; a word left empty (digits) aligns to the wildcard.
-        tokens = [
-            [dictionary[c] for c in w.lower() if c in dictionary and c != "*"] or [dictionary["*"]] for w in words
-        ]
-        try:
-            emission, _ = model(torch.from_numpy(waveform)[None].to(device))
-            emission = emission.cpu()
-            path, scores = torchaudio.functional.forced_align(emission, torch.tensor([sum(tokens, [])]), blank=0)
-        except (RuntimeError, ValueError):  # e.g. audio too short for its tokens; the caller beeps the whole line
-            return None
-        token_spans = torchaudio.functional.merge_tokens(path[0], scores[0].exp())
-        seconds_per_frame = len(waveform) / emission.shape[1] / STDIN_SAMPLE_RATE
-        aligned, index = [], 0
-        for word, word_tokens in zip(words, tokens, strict=True):
-            first, last = token_spans[index], token_spans[index + len(word_tokens) - 1]
-            aligned.append(
-                {"word": word, "start": first.start * seconds_per_frame, "end": last.end * seconds_per_frame}
-            )
-            index += len(word_tokens)
-        return aligned
-
-    return align
 
 
 def listen_microphone(show) -> None:

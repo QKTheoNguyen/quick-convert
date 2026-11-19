@@ -1,7 +1,7 @@
 # @package _global_
 
-# Transcribe audio with word timings and list detected personal information,
-# with its time range, per utterance.
+# Transcribe audio into force-aligned words and list detected personal
+# information, with its time range, per utterance.
 defaults:
   - /global: default
   - /dataset: librispeech
@@ -13,8 +13,6 @@ defaults:
 system:
   _target_: quick_convert.systems.pii.TranscriptPIISystem
   name: transcript_pii
-  asr:
-    word_timestamps: true
 
 dataset:
   splits:

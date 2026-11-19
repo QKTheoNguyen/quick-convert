@@ -44,7 +44,7 @@ class OpenAIPrivacyFilter(PIIDetector):
         return self._tokenizer, self._model
 
     @torch.inference_mode()
-    def detect(self, texts: list[str]) -> list[list[dict]]:
+    def detect_text(self, texts: list[str]) -> list[list[dict]]:
         tokenizer, model = self._load()
         results = []
         # One text per forward pass avoids relying on a padding token.
@@ -88,5 +88,5 @@ def decode_bioes(text: str, offsets: list, tags: list[str], scores: list[float])
         span["end"] -= len(raw) - len(raw.rstrip())
         span["text"] = text[span["start"] : span["end"]]
         scores = span.pop("scores")
-        span["score"] = sum(scores) / len(scores)
+        span["confidence"] = sum(scores) / len(scores)
     return spans

@@ -8,17 +8,16 @@ from .base import PIIDetector
 
 
 class TranscriptPIISystem(InferenceSystem):
-    """Transcribe audio, then detect personal information in the transcripts.
+    """Transcribe audio into timed words, then detect personal information in them.
 
     ``get_labels`` returns one ``{"transcript": str, "pii": list[dict]}``
-    record per sample, with span offsets relative to that transcript. When the
-    ASR system has ``word_timestamps`` enabled, the transcript is its words
-    joined by spaces and each span also gets ``start_time`` and ``end_time``
-    in seconds from the start of the sample.
+    record per sample: the words joined by spaces, and the spans of
+    :meth:`PIIDetector.detect` with ``start_s`` and ``end_s`` in seconds from
+    the start of the sample.
 
     Args:
-        asr: System that produces the transcripts.
-        detector: System that finds personal information in text.
+        asr: System that produces timed words with ``transcribe_words``.
+        detector: System that finds personal information in the words.
         name: Human-readable system name.
     """
 
@@ -29,31 +28,12 @@ class TranscriptPIISystem(InferenceSystem):
         self.name = name
 
     def get_labels(self, batch: AudioBatch) -> list[dict]:
-        if getattr(self.asr, "word_timestamps", False):
-            words = self.asr.transcribe_batch_words(batch)
-            transcripts = [" ".join(word["word"] for word in sample_words) for sample_words in words]
-        else:
-            words = None
-            transcripts = self.asr.transcribe_batch(batch)
-        spans = self.detector.detect(transcripts)
-        if words is not None:
-            for sample_spans, sample_words in zip(spans, words, strict=True):
-                add_span_times(sample_spans, sample_words)
-        return [{"transcript": text, "pii": pii} for text, pii in zip(transcripts, spans, strict=True)]
-
-
-def add_span_times(spans: list[dict], words: list[dict]) -> None:
-    """Set each span's time range from the words it overlaps in ``" ".join(words)``."""
-    bounds = []
-    position = 0
-    for word in words:
-        bounds.append((position, position + len(word["word"])))
-        position += len(word["word"]) + 1
-    for span in spans:
-        hits = [
-            word
-            for word, (start, end) in zip(words, bounds, strict=True)
-            if start < span["end"] and end > span["start"]
-        ]
-        span["start_time"] = hits[0]["start"] if hits else None
-        span["end_time"] = hits[-1]["end"] if hits else None
+        if batch.waveforms is None or batch.lengths is None or batch.sample_rates is None:
+            raise ValueError("TranscriptPIISystem requires a batch with loaded audio.")
+        records = []
+        for waveform, length, sr in zip(batch.waveforms, batch.lengths, batch.sample_rates, strict=True):
+            if int(sr) != self.asr.sr:
+                raise ValueError(f"Expected audio at {self.asr.sr} Hz, got {int(sr)} Hz.")
+            words = self.asr.transcribe_words(waveform[: int(length)])
+            records.append({"transcript": " ".join(w["word"] for w in words), "pii": self.detector.detect(words)})
+        return records

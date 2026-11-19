@@ -4,19 +4,21 @@ from types import SimpleNamespace
 
 import numpy as np
 import torch
+from pii_contract import assert_pii_spans
 
-from quick_convert.data import AudioBatch, AudioSample
+from quick_convert.data import AudioBatch
 from quick_convert.dependencies import compose_dependency_plan
 from quick_convert.pipelines.evaluation.pipeline import EvalPipeline
 from quick_convert.systems.pii import (
     OpenAIPrivacyFilter,
+    PIIDetector,
     StreamingPIIBeeper,
     StreamingPIIMasker,
     TranscriptPIISystem,
     mask_text,
 )
+from quick_convert.systems.pii.base import timed_spans
 from quick_convert.systems.pii.privacy_filter import decode_bioes
-from quick_convert.systems.pii.transcript import add_span_times
 
 
 TEXT = "Call Alice Smith at 555 1234 now"
@@ -32,7 +34,7 @@ def test_decode_bioes_merges_tokens_into_trimmed_character_spans():
         ("private_person", "Alice Smith", 5, 16),
         ("private_phone", "555 1234", 20, 28),
     ]
-    assert spans[0]["score"] == 0.7
+    assert spans[0]["confidence"] == 0.7
 
 
 def test_decode_bioes_splits_adjacent_singletons_and_label_changes():
@@ -41,7 +43,7 @@ def test_decode_bioes_splits_adjacent_singletons_and_label_changes():
     assert [(s["label"], s["text"]) for s in spans] == [("secret", "ab"), ("secret", "cd"), ("private_url", "ef")]
 
 
-def test_privacy_filter_runs_token_classification_with_offsets(monkeypatch):
+def _fake_transformers(monkeypatch):
     labels = sorted(set(TAGS))
     id2label = dict(enumerate(labels))
 
@@ -74,18 +76,48 @@ def test_privacy_filter_runs_token_classification_with_offsets(monkeypatch):
     )
     monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
 
-    spans = OpenAIPrivacyFilter().detect([TEXT])
+
+def test_privacy_filter_runs_token_classification_with_offsets(monkeypatch):
+    _fake_transformers(monkeypatch)
+
+    spans = OpenAIPrivacyFilter().detect_text([TEXT])
 
     assert [[s["text"] for s in text_spans] for text_spans in spans] == [["Alice Smith", "555 1234"]]
 
 
+def test_privacy_filter_detects_spans_timed_by_asr_words(monkeypatch):
+    _fake_transformers(monkeypatch)
+    words = [{"word": w, "start_s": i / 2, "end_s": i / 2 + 0.25} for i, w in enumerate(TEXT.split())]
+
+    spans = OpenAIPrivacyFilter().detect(words)
+
+    assert [(s["label"], s["text"], s["start_s"], s["end_s"]) for s in spans] == [
+        ("private_person", "Alice Smith", 0.5, 1.25),
+        ("private_phone", "555 1234", 2.0, 2.75),
+    ]
+    assert_pii_spans(spans, words)
+    assert OpenAIPrivacyFilter().detect([]) == []
+
+
+def _loaded_batch(path, samples=16):
+    return AudioBatch(
+        utt_ids=["u1"],
+        paths=[path],
+        splits=["test"],
+        resources={},
+        waveforms=torch.zeros(1, 32),
+        lengths=torch.tensor([samples]),
+        sample_rates=torch.tensor([16_000]),
+    )
+
+
 def test_evaluation_without_metrics_records_transcript_pii_columns(tmp_path):
-    asr = SimpleNamespace(transcribe_batch=lambda batch: ["hi Bob"] * len(batch))
-    span = {"label": "private_person", "start": 3, "end": 6, "text": "Bob", "score": 0.9}
-    detector = SimpleNamespace(detect=lambda texts: [[span] for _ in texts])
-    batch = AudioBatch.from_samples([AudioSample(utt_id="u1", path=tmp_path / "u1.wav", split="test")])
+    words = [{"word": "hi", "start_s": 0.0, "end_s": 0.2}, {"word": "Bob", "start_s": 0.3, "end_s": 0.6}]
+    asr = SimpleNamespace(sr=16_000, transcribe_words=lambda wav: words)
+    span = {"start_s": 0.3, "end_s": 0.6, "label": "private_person", "confidence": 0.9, "text": "Bob"}
+    detector = SimpleNamespace(detect=lambda words: [span])
     pipeline = EvalPipeline(
-        dataset=SimpleNamespace(make_dataloader=lambda **kwargs: [batch]),
+        dataset=SimpleNamespace(make_dataloader=lambda **kwargs: [_loaded_batch(tmp_path / "u1.wav")]),
         system=TranscriptPIISystem(asr, detector),
         metrics=[],
         out_dir=tmp_path,
@@ -107,32 +139,53 @@ def test_pii_run_requires_asr_and_privacy_filter_extras():
     assert compose_dependency_plan("eval_pii_librispeech").extras == ("moonshine", "privacy-filter")
 
 
-def test_timed_asr_gives_each_span_the_time_range_of_its_words(tmp_path):
+class _FixedDetector(PIIDetector):
+    def __init__(self, spans):
+        super().__init__()
+        self.spans = spans
+        self.seen = []
+
+    def detect_text(self, texts):
+        self.seen.extend(texts)
+        return [self.spans for _ in texts]
+
+
+def test_transcript_pii_gives_each_span_the_time_range_of_its_words(tmp_path):
     words = [
-        {"word": "call", "start": 0.0, "end": 0.4},
-        {"word": "Bob", "start": 0.5, "end": 0.8},
-        {"word": "Smith,", "start": 0.8, "end": 1.2},
-        {"word": "bye", "start": 2.0, "end": 2.3},
+        {"word": "call", "start_s": 0.0, "end_s": 0.4},
+        {"word": "Bob", "start_s": 0.5, "end_s": 0.8},
+        {"word": "Smith,", "start_s": 0.8, "end_s": 1.2},
+        {"word": "bye", "start_s": 2.0, "end_s": 2.3},
     ]
-    asr = SimpleNamespace(word_timestamps=True, transcribe_batch_words=lambda batch: [words])
-    seen = []
+    lengths = []
+    asr = SimpleNamespace(sr=16_000, transcribe_words=lambda wav: (lengths.append(len(wav)), words)[1])
+    detector = _FixedDetector(
+        [{"label": "private_person", "start": 5, "end": 14, "text": "Bob Smith", "confidence": 0.8}]
+    )
 
-    def detect(texts):
-        seen.extend(texts)
-        return [[{"label": "private_person", "start": 5, "end": 14, "text": "Bob Smith", "score": 1.0}]]
+    [record] = TranscriptPIISystem(asr, detector).get_labels(_loaded_batch(tmp_path / "u1.wav", samples=20))
 
-    system = TranscriptPIISystem(asr, SimpleNamespace(detect=detect))
-    [record] = system.get_labels(batch=None)
+    assert lengths == [20]  # padding trimmed
+    assert detector.seen == ["call Bob Smith, bye"]
+    assert record["pii"] == [
+        {"start_s": 0.5, "end_s": 1.2, "label": "private_person", "confidence": 0.8, "text": "Bob Smith,"}
+    ]
+    assert_pii_spans(record["pii"], words)
 
-    assert seen == ["call Bob Smith, bye"]
-    assert (record["pii"][0]["start_time"], record["pii"][0]["end_time"]) == (0.5, 1.2)
+
+def test_detect_sorts_spans_defaults_confidence_and_skips_empty_transcripts():
+    words = [{"word": "Alice", "start_s": 0.1, "end_s": 0.4}, {"word": "Bob", "start_s": 0.5, "end_s": 0.7}]
+    detector = _FixedDetector([{"label": "b", "start": 6, "end": 9}, {"label": "a", "start": 0, "end": 5}])
+
+    spans = detector.detect(words)
+
+    assert [(s["label"], s["confidence"]) for s in spans] == [("a", 1.0), ("b", 1.0)]
+    assert_pii_spans(spans, words)
+    assert detector.detect([]) == [] and detector.seen == ["Alice Bob"]
 
 
-def test_span_without_overlapping_word_has_no_time_range():
-    spans = [{"start": 4, "end": 5}]
-    add_span_times(spans, [{"word": "hi", "start": 0.0, "end": 0.2}])
-
-    assert (spans[0]["start_time"], spans[0]["end_time"]) == (None, None)
+def test_span_without_overlapping_word_is_dropped():
+    assert timed_spans([{"label": "x", "start": 4, "end": 5}], [{"word": "hi", "start_s": 0.0, "end_s": 0.2}]) == []
 
 
 def test_mask_text_replaces_spans_and_merges_overlaps():
@@ -156,13 +209,13 @@ def test_streaming_masker_uses_finished_lines_as_context_and_clips_spans():
             return [[]]
         return [[{"label": "private_phone", "start": match.start(), "end": match.end()}]]
 
-    masker = StreamingPIIMasker(SimpleNamespace(detect=detect), context_words=4)
+    masker = StreamingPIIMasker(SimpleNamespace(detect_text=detect), context_words=4)
 
     assert masker.mask("you can call me at 415", done=True) == "you can call me at [PRIVATE_PHONE]"
     assert masker.mask("555 01", done=False) == "[PRIVATE_PHONE]"
     assert masker.mask("555 0132", done=True) == "[PRIVATE_PHONE]"
     assert seen == ["you can call me at 415", "call me at 415 555 01", "call me at 415 555 0132"]
-    assert StreamingPIIMasker(SimpleNamespace(detect=detect), context_words=0).mask("555 0132") == "555 0132"
+    assert StreamingPIIMasker(SimpleNamespace(detect_text=detect), context_words=0).mask("555 0132") == "555 0132"
 
 
 def _name_detector(texts):
@@ -174,9 +227,9 @@ def test_streaming_beeper_delays_audio_and_beeps_realigned_padded_spans():
 
     def align(waveform, words):
         segments.append((len(waveform), words))
-        return [{"word": "hi", "start": 0.0, "end": 0.5}, {"word": "sarah", "start": 0.5, "end": 1.0}]
+        return [{"word": "hi", "start_s": 0.0, "end_s": 0.5}, {"word": "sarah", "start_s": 0.5, "end_s": 1.0}]
 
-    masker = StreamingPIIMasker(SimpleNamespace(detect=_name_detector))
+    masker = StreamingPIIMasker(SimpleNamespace(detect_text=_name_detector))
     beeper = StreamingPIIBeeper(masker, align, sample_rate=100, delay=1.0, pad_before=0.1, pad_after=0.1)
     beeper.write(np.ones(300, dtype=np.float32))
 
@@ -194,7 +247,7 @@ def test_streaming_beeper_delays_audio_and_beeps_realigned_padded_spans():
 
 def test_streaming_beeper_beeps_whole_line_when_alignment_fails():
     beeper = StreamingPIIBeeper(
-        StreamingPIIMasker(SimpleNamespace(detect=_name_detector)),
+        StreamingPIIMasker(SimpleNamespace(detect_text=_name_detector)),
         lambda waveform, words: None,
         sample_rate=100,
         delay=0.0,
@@ -209,7 +262,7 @@ def test_streaming_beeper_beeps_whole_line_when_alignment_fails():
 
 def test_streaming_beeper_aligns_only_lines_with_findings_and_keeps_finished_context():
     calls = []
-    masker = StreamingPIIMasker(SimpleNamespace(detect=lambda texts: (calls.append(texts[0]), [[]])[1]))
+    masker = StreamingPIIMasker(SimpleNamespace(detect_text=lambda texts: (calls.append(texts[0]), [[]])[1]))
     beeper = StreamingPIIBeeper(masker, lambda waveform, words: calls.append("align"), sample_rate=100)
     beeper.write(np.ones(100, dtype=np.float32))
 

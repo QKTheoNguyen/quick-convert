@@ -1,2 +1,3 @@
 _target_: quick_convert.systems.asr.MoonshineASR
 name: moonshine
+device: ${device}
