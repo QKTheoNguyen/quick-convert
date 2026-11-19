@@ -1,3 +1,4 @@
+import re
 import sys
 from types import SimpleNamespace
 
@@ -6,7 +7,7 @@ import torch
 from quick_convert.data import AudioBatch, AudioSample
 from quick_convert.dependencies import compose_dependency_plan
 from quick_convert.pipelines.evaluation.pipeline import EvalPipeline
-from quick_convert.systems.pii import OpenAIPrivacyFilter, TranscriptPIISystem
+from quick_convert.systems.pii import OpenAIPrivacyFilter, StreamingPIIMasker, TranscriptPIISystem, mask_text
 from quick_convert.systems.pii.privacy_filter import decode_bioes
 from quick_convert.systems.pii.transcript import add_span_times
 
@@ -125,3 +126,33 @@ def test_span_without_overlapping_word_has_no_time_range():
     add_span_times(spans, [{"word": "hi", "start": 0.0, "end": 0.2}])
 
     assert (spans[0]["start_time"], spans[0]["end_time"]) == (None, None)
+
+
+def test_mask_text_replaces_spans_and_merges_overlaps():
+    spans = [
+        {"label": "private_phone", "start": 20, "end": 28},
+        {"label": "private_person", "start": 5, "end": 16},
+        {"label": "secret", "start": 22, "end": 32},
+    ]
+
+    assert mask_text(TEXT, spans) == "Call [PRIVATE_PERSON] at [PRIVATE_PHONE]"
+
+
+def test_streaming_masker_uses_finished_lines_as_context_and_clips_spans():
+    seen = []
+
+    def detect(texts):
+        # Tags digits as a phone number only when the cue is present, like the real model.
+        seen.append(texts[0])
+        match = re.search(r"\d[\d ]*\d", texts[0])
+        if "call me at" not in texts[0] or match is None:
+            return [[]]
+        return [[{"label": "private_phone", "start": match.start(), "end": match.end()}]]
+
+    masker = StreamingPIIMasker(SimpleNamespace(detect=detect), context_words=4)
+
+    assert masker.mask("you can call me at 415", done=True) == "you can call me at [PRIVATE_PHONE]"
+    assert masker.mask("555 01", done=False) == "[PRIVATE_PHONE]"
+    assert masker.mask("555 0132", done=True) == "[PRIVATE_PHONE]"
+    assert seen == ["you can call me at 415", "call me at 415 555 01", "call me at 415 555 0132"]
+    assert StreamingPIIMasker(SimpleNamespace(detect=detect), context_words=0).mask("555 0132") == "555 0132"

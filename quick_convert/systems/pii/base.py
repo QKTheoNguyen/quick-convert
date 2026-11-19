@@ -17,3 +17,17 @@ class PIIDetector(InferenceSystem, ABC):
     def detect(self, texts: list[str]) -> list[list[dict]]:
         """Return the detected spans of each text, preserving input order."""
         ...
+
+
+def mask_text(text: str, spans: list[dict]) -> str:
+    """Replace each detected span with ``[LABEL]``; overlapping spans share one mask."""
+    parts = []
+    position = 0
+    for span in sorted(spans, key=lambda span: span["start"]):
+        if span["start"] < position:
+            position = max(position, span["end"])
+            continue
+        parts += [text[position : span["start"]], f"[{span['label'].upper()}]"]
+        position = span["end"]
+    parts.append(text[position:])
+    return "".join(parts)
