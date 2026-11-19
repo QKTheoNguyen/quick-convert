@@ -1,0 +1,23 @@
+# @package _global_
+
+# Transcribe audio and list detected personal information per utterance.
+defaults:
+  - /global: default
+  - /dataset: librispeech
+  - /pipeline: evaluation
+  - /asr@system.asr: whisper
+  - /pii@system.detector: privacy_filter
+  - _self_
+
+system:
+  _target_: quick_convert.systems.pii.TranscriptPIISystem
+  name: transcript_pii
+
+dataset:
+  splits:
+    - test-other
+  load: true
+  target_sr: ${system.asr.sr}
+
+ref_dataset: null
+metrics: []

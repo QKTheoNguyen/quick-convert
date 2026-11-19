@@ -46,6 +46,8 @@ extras:
     probes: [jiwer]
   whisper:
     probes: [whisper]
+  privacy-filter:
+    probes: [transformers]
   yaapt:
     probes: [amfm_decompy]
 
@@ -84,6 +86,9 @@ targets:
   quick_convert.components.encoders.content.WavLMContentEncoder: [transformers]
   quick_convert.pipelines.evaluation.metrics.JiwerWER: [wer]
   quick_convert.systems.asr.WhisperASR: [whisper]
+  quick_convert.systems.pii.OpenAIPrivacyFilter: [privacy-filter]
+  # The nested ASR and detector select the requirements.
+  quick_convert.systems.pii.TranscriptPIISystem: []
   quick_convert.systems.ser.odyssey_ser.OdysseySER: [transformers]
   quick_convert.systems.ser.speechbrain_ser.SpeechBrainSER: [speechbrain-ser]
   quick_convert.systems.conversion.PSST1ConversionSystem: [speechbrain, yaapt]
