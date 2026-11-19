@@ -2,8 +2,15 @@
 
 from .base import PIIDetector, mask_text
 from .privacy_filter import OpenAIPrivacyFilter
-from .streaming import StreamingPIIMasker
+from .streaming import StreamingPIIBeeper, StreamingPIIMasker
 from .transcript import TranscriptPIISystem
 
 
-__all__ = ["OpenAIPrivacyFilter", "PIIDetector", "StreamingPIIMasker", "TranscriptPIISystem", "mask_text"]
+__all__ = [
+    "OpenAIPrivacyFilter",
+    "PIIDetector",
+    "StreamingPIIBeeper",
+    "StreamingPIIMasker",
+    "TranscriptPIISystem",
+    "mask_text",
+]

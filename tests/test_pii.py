@@ -2,12 +2,19 @@ import re
 import sys
 from types import SimpleNamespace
 
+import numpy as np
 import torch
 
 from quick_convert.data import AudioBatch, AudioSample
 from quick_convert.dependencies import compose_dependency_plan
 from quick_convert.pipelines.evaluation.pipeline import EvalPipeline
-from quick_convert.systems.pii import OpenAIPrivacyFilter, StreamingPIIMasker, TranscriptPIISystem, mask_text
+from quick_convert.systems.pii import (
+    OpenAIPrivacyFilter,
+    StreamingPIIBeeper,
+    StreamingPIIMasker,
+    TranscriptPIISystem,
+    mask_text,
+)
 from quick_convert.systems.pii.privacy_filter import decode_bioes
 from quick_convert.systems.pii.transcript import add_span_times
 
@@ -156,3 +163,57 @@ def test_streaming_masker_uses_finished_lines_as_context_and_clips_spans():
     assert masker.mask("555 0132", done=True) == "[PRIVATE_PHONE]"
     assert seen == ["you can call me at 415", "call me at 415 555 01", "call me at 415 555 0132"]
     assert StreamingPIIMasker(SimpleNamespace(detect=detect), context_words=0).mask("555 0132") == "555 0132"
+
+
+def _name_detector(texts):
+    return [[{"label": "private_person", "start": m.start(), "end": m.end()} for m in re.finditer("sarah", texts[0])]]
+
+
+def test_streaming_beeper_delays_audio_and_beeps_realigned_padded_spans():
+    segments = []
+
+    def align(waveform, words):
+        segments.append((len(waveform), words))
+        return [{"word": "hi", "start": 0.0, "end": 0.5}, {"word": "sarah", "start": 0.5, "end": 1.0}]
+
+    masker = StreamingPIIMasker(SimpleNamespace(detect=_name_detector))
+    beeper = StreamingPIIBeeper(masker, align, sample_rate=100, delay=1.0, pad_before=0.1, pad_after=0.1)
+    beeper.write(np.ones(300, dtype=np.float32))
+
+    assert beeper.update("hi sarah", start_time=1.0) == "hi [PRIVATE_PERSON]"
+    assert segments == [(200, ["hi", "sarah"])]  # the line's audio from its start time, and its words
+    beeper.update("hi sarah how", start_time=1.0)
+    assert len(segments) == 1  # same finding on the same line: no realignment
+    released = beeper.read()
+    assert len(released) == 200  # 3 s written, 1 s held back
+    assert (released[:140] == 1).all() and (released[140:] != 1).all()  # beep from 1.5 s - 0.1 s
+    tail = beeper.read(final=True)
+    assert (tail[:10] != 1).all() and (tail[10:] == 1).all()  # beep until 2.0 s + 0.1 s
+    assert len(beeper.read(final=True)) == 0
+
+
+def test_streaming_beeper_beeps_whole_line_when_alignment_fails():
+    beeper = StreamingPIIBeeper(
+        StreamingPIIMasker(SimpleNamespace(detect=_name_detector)),
+        lambda waveform, words: None,
+        sample_rate=100,
+        delay=0.0,
+        pad_before=0.0,
+        pad_after=0.0,
+    )
+    beeper.write(np.ones(300, dtype=np.float32))
+    beeper.update("hi sarah", start_time=1.0)
+    released = beeper.read()
+    assert (released[:100] == 1).all() and (released[100:] != 1).all()
+
+
+def test_streaming_beeper_aligns_only_lines_with_findings_and_keeps_finished_context():
+    calls = []
+    masker = StreamingPIIMasker(SimpleNamespace(detect=lambda texts: (calls.append(texts[0]), [[]])[1]))
+    beeper = StreamingPIIBeeper(masker, lambda waveform, words: calls.append("align"), sample_rate=100)
+    beeper.write(np.ones(100, dtype=np.float32))
+
+    beeper.update("hello", start_time=0.0)
+    beeper.update("hello there", start_time=0.0, done=True)
+    beeper.update("again", start_time=1.0)
+    assert calls == ["hello", "hello there", "hello there again"]
